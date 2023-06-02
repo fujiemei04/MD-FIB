@@ -1,0 +1,1649 @@
+---
+title: "MD P1"
+author: "Joan Areal Azuara Laia Bonilla Pérez Miguel Gutiérrez Jariod Fujie Mei Alessandro Scannavini"
+date: \today
+output:
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+  word_document:
+    toc: no
+    toc_depth: '4'
+  html_document:
+    toc: no
+    toc_depth: '4'
+Subtitle: Data Processing
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Introduction
+
+In this project we are looking the gap salary between men and women. 
+To run the script propertly, you must have to take the corresponding dataset and put it in the same folder as the script. 
+The dataset is called "CurrentPopulationSurvey.csv". Also, you can find it in the following link: https://www.kaggle.com/datasets/fedesoriano/gender-pay-gap-dataset
+Moreover, we let you the final dataset treated in the same folder as the script.
+To generate the analysis, you must run each chunk of code.
+
+
+
+# Required packages 
+```{r,include=FALSE, echo=FALSE}
+requiredPackages <- c("tidyverse","datasets","stringr","VIM","stats","FactoMineR","factoextra","ggplot2","cluster")
+
+#use this function to check if each package is on the local machine
+#if a package is installed, it will be loaded
+#if any are not, the missing package(s) will be installed and loaded
+package.check <- lapply(requiredPackages, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    install.packages(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+})
+
+```
+
+
+# Loading and sampling the data
+```{r,echo=FALSE,echo=FALSE}
+#load datasert
+r <- read.csv("C:/Users/migue/MD/CurrentPopulationSurvey.csv")
+
+data(r)
+class(r)
+
+#sort by year desc
+order_r <- r %>% arrange(desc(year)) 
+
+#number of rows
+nrow(order_r)
+
+
+#delete rows from 5001 to 344287
+order_r_less_m <- order_r 
+order_r_less_w <- order_r %>% arrange(desc(sex))
+order_r_less_w <- order_r_less_w[-c(2501:344287), ]
+order_r_less_m <- order_r_less_m[-c(2501:344287), ]
+order_r_less <- order_r_less_m %>%  full_join(order_r_less_w)
+
+#select 25 columns of 243
+salary_gap_set <- order_r_less %>% select(!-one_of('race','bpl','educ99','incwage','relate','age','sex','marst','classwkr','region','metro','numprec','hrwage','wkswork1','uhrswork','adj_ind', 'adj_occ2name','ftype','sch','empstat','annhrs'))
+
+#replace . per "NA" adj_occ2name
+adj_names <- ifelse(salary_gap_set$adj_occ2name == '.', NA, salary_gap_set$adj_occ2name ) 
+salary_gap_set $ adj_occ2name <- adj_names
+
+#Number of nullables
+vector1 <- c('race','bpl','educ99','incwage','relate','age','sex','marst','classwkr','region','metro','numprec','hrwage','wkswork1','uhrswork','adj_ind', 'adj_occ2name','ftype','sch','empstat','annhrs')
+```
+
+# Missing values
+```{r}
+print("number of nullable values:")
+
+miss<-function(df) {
+  missing <-c()
+  names<-c()
+  colsnames = colnames(df)
+  for (variable in 1:length(colnames(df))){
+    names<-append(names,colsnames[variable])
+    missing<-append(missing,sum(is.na(df[,variable])))
+  }
+  df1<-cbind.data.frame(names,missing)
+}
+missings<-miss(salary_gap_set)
+
+print(missings[order(missings$missing, decreasing = T), ])
+
+temp<-sum(missings[2])
+print(paste("Total number of nullable values: ",temp))
+print(paste("Total percentage of missing values in dataset: ",(temp/(5000*21))*100))
+```
+
+# KNN imputation
+```{r}
+mode<-function(x){which.max(tabulate(x))}
+```
+
+```{r}
+imputations<-c("adj_occ2name","bpl","metro")
+plots<-function(df,vector) {
+  for (var in vector) {
+    barplot(100*prop.table(table(df[var])),las=2,col=4)
+  }
+}
+plots(salary_gap_set,imputations)
+```
+
+# KNN
+```{r}
+#from what ive seen k=sqrt(numer of samples) to the nearest odd is the optimal k
+salary_gap_set<-kNN(salary_gap_set,variable = imputations,k=71)
+```
+
+```{r}
+plots(salary_gap_set,imputations)
+salary_gap_set <- salary_gap_set %>% select (-one_of ('adj_occ2name_imp', 'bpl_imp', 'metro_imp'))
+```
+# Descriptive analisys
+```{r}
+
+#replace NA per "NOT avaliable"
+#salary_gap_set[is.na(salary_gap_set)] <- "Not avaliable"
+View(salary_gap_set)
+
+
+#set categorical values:
+
+#region
+salary_gap_set_region <- transmute(salary_gap_set, region = case_when(region == 11 ~ "New England Division",
+                                                                      region == 12 ~ "Middle Atlantic Division",
+                                                                      region == 21 ~ "East North Central Div.",
+                                                                      region == 22 ~ "West North Central Div.",
+                                                                      region == 31 ~ "South Atlantic Division",
+                                                                      region == 32 ~ "East South Central Div.",
+                                                                      region == 33 ~ "West South Central Div.",
+                                                                      region == 41 ~ "Mountain Division",
+                                                                      region == 42 ~ "Pacific Division"))
+salary_gap_set$region <- salary_gap_set_region$region
+
+factor_region <- factor(salary_gap_set$region, levels = c("New England Division",
+                                                          "Middle Atlantic Division",
+                                                          "East North Central Div.",
+                                                          "West North Central Div.",
+                                                          "South Atlantic Division",
+                                                          "East South Central Div.",
+                                                          "West South Central Div.",
+                                                          "Mountain Division",
+                                                          "Pacific Division"))
+
+levels(factor_region)
+summary(factor_region)
+
+#metro
+salary_gap_set_metro <- transmute(salary_gap_set, metro = case_when(metro == 1 ~ "Not in metro area",
+                                                                    metro == 2 ~ "In metro area, central / principal city",
+                                                                    metro == 3 ~ "In metro area, outside central / principal city",
+                                                                    metro == 4 ~ "Central / Principal city status unknown",
+))
+salary_gap_set$metro <- salary_gap_set_metro$metro
+salary_gap_set$metro[is.na(salary_gap_set$metro)] <- "Not avaliable"
+
+factor_metro <- factor(salary_gap_set$metro, levels = c("Not in metro area",
+                                                        "In metro area, central / principal city",
+                                                        "In metro area, outside central / principal city",
+                                                        "Central / Principal city status unknown",
+                                                        "Not avaliable"))
+levels(factor_metro)
+summary(factor_metro)
+
+#relate
+salary_gap_set_relate <- transmute(salary_gap_set, relate = case_when(relate == 101 ~ "Head/Householder",
+                                                                      relate == 201 ~ "Spouse",
+                                                                      relate == 301 ~ "Child",
+                                                                      relate == 501 ~ "Parent",
+                                                                      relate == 701 ~ "Sibling",
+                                                                      relate == 901 ~ "Grandchild",
+                                                                      relate == 1001 ~ "Other Relatives",
+                                                                      relate == 1114 ~ "Unmarried Partner",
+                                                                      relate == 1115 ~ "Housemate/Roomate",
+                                                                      relate == 1241 ~ "Roomers/boarders/lodgers",
+                                                                      relate == 1260 ~ "Other non-relatives",))
+
+salary_gap_set$relate <- salary_gap_set_relate$relate
+salary_gap_set$relate[is.na(salary_gap_set$relate)] <- "Not avaliable"
+
+factor_relate <- factor(salary_gap_set$relate, levels = c("Head/Householder",
+                                                          "Spouse",
+                                                          "Child",
+                                                          "Parent",
+                                                          "Sibling",
+                                                          "Grandchild",
+                                                          "Other Relatives",
+                                                          "Unmarried Partner",
+                                                          "Housemate/Roomate",
+                                                          "Roomers/boarders/lodgers",
+                                                          "Other non-relatives"))
+
+levels(factor_relate)
+summary(factor_relate)
+
+#sex
+adj_sex <- ifelse(salary_gap_set$sex == 1, "Male", "Female") 
+salary_gap_set$sex <- adj_sex
+
+factor_sex <- factor(salary_gap_set$sex, levels = c("Male", "Female"))
+levels(factor_sex)
+summary(factor_sex)
+
+#race
+salary_gap_set_race <- transmute(salary_gap_set, race = case_when(race == 1 ~ "White nonhisp",
+                                                                  race == 2 ~ "Black nonhisp",
+                                                                  race == 3 ~ "Hispanic",
+                                                                  race == 4 ~ "Other nonhisp"))
+
+salary_gap_set$race <- salary_gap_set_race$race
+salary_gap_set$race[is.na(salary_gap_set$race)] <- "Not avaliable"
+
+factor_race <- factor(salary_gap_set$race, levels = c("White nonhisp",
+                                                      "Black nonhisp",
+                                                      "Hispanic",
+                                                      "Other nonhisp"))
+
+levels(factor_race)
+summary(factor_race)
+
+#marst
+salary_gap_set_marst <- transmute(salary_gap_set, marst = case_when(marst == 1 ~ "Married, spouse present",
+                                                                    marst == 2 ~ "Married, spouse absent",
+                                                                    marst == 3 ~ "Separated",
+                                                                    marst == 4 ~ "Divorced",
+                                                                    marst == 5 ~ "Widowed",
+                                                                    marst == 6 ~ "Never married/single"))
+
+salary_gap_set$marst <- salary_gap_set_marst$marst
+salary_gap_set$marst[is.na(salary_gap_set$marst)] <- "Not avaliable"
+
+factor_marst<- factor(salary_gap_set$marst, levels = c("Married, spouse present",
+                                                       "Married, spouse absent",
+                                                       "Separated",
+                                                       "Divorced",
+                                                       "Widowed",
+                                                       "Never married/single"))
+
+levels(factor_marst)
+summary(factor_marst)
+
+#bpl
+salary_gap_set_bpl <- transmute(salary_gap_set, bpl = case_when(bpl == 10500 ~ "Others",
+                                                                bpl == 11000 ~ "Others",
+                                                                bpl == 15000 ~ "Others",
+                                                                bpl == 20000 ~ "Mexico",
+                                                                bpl == 21020 ~ "Others",
+                                                                bpl == 21030 ~ "Others",
+                                                                bpl == 21040 ~ "Others",
+                                                                bpl == 21050 ~ "Others",
+                                                                bpl == 21060 ~ "Others",
+                                                                bpl == 21070 ~ "Others",
+                                                                bpl == 25000 ~ "Others",
+                                                                bpl == 26010 ~ "Others",
+                                                                bpl == 26020 ~ "Others",
+                                                                bpl == 26030 ~ "Others",
+                                                                bpl == 26043 ~ "Others",
+                                                                bpl == 26054 ~ "Others",
+                                                                bpl == 26060 ~ "Others",
+                                                                bpl == 26080 ~ "Others",
+                                                                bpl == 26091 ~ "Others",
+                                                                bpl == 30005 ~ "Others",
+                                                                bpl == 30010 ~ "Others",
+                                                                bpl == 30015 ~ "Others",
+                                                                bpl == 30020 ~ "Others",
+                                                                bpl == 30025 ~ "Others",
+                                                                bpl == 30030 ~ "Others",
+                                                                bpl == 30050 ~ "Others",
+                                                                bpl == 30060 ~ "Others",
+                                                                bpl == 30065 ~ "Others",
+                                                                bpl == 40100 ~ "Others",
+                                                                bpl == 40500 ~ "Others",
+                                                                bpl == 41000 ~ "Others",
+                                                                bpl == 41300 ~ "Others",
+                                                                bpl == 41400 ~ "Others",
+                                                                bpl == 42000 ~ "Others",
+                                                                bpl == 42100 ~ "Others",
+                                                                bpl == 42500 ~ "Others",
+                                                                bpl == 43400 ~ "Others",
+                                                                bpl == 43600 ~ "Others",
+                                                                bpl == 43800 ~ "Others",
+                                                                bpl == 45200 ~ "Others",
+                                                                bpl == 45300 ~ "Others",
+                                                                bpl == 45500 ~ "Others",
+                                                                bpl == 45650 ~ "Others",
+                                                                bpl == 45675 ~ "Others",
+                                                                bpl == 45700 ~ "Others",
+                                                                bpl == 45720 ~ "Others",
+                                                                bpl == 45730 ~ "Others",
+                                                                bpl == 45740 ~ "Others",
+                                                                bpl == 45750 ~ "Others",
+                                                                bpl == 46200 ~ "Others",
+                                                                bpl == 46300 ~ "Others",
+                                                                bpl == 46500 ~ "Others",
+                                                                bpl == 46530 ~ "Others",
+                                                                bpl == 49900 ~ "Others",
+                                                                bpl == 50000 ~ "Others",
+                                                                bpl == 50010 ~ "Others",
+                                                                bpl == 50040 ~ "Others",
+                                                                bpl == 50100 ~ "Others",
+                                                                bpl == 50200 ~ "Others",
+                                                                bpl == 50220 ~ "Others",
+                                                                bpl == 51100 ~ "Others",
+                                                                bpl == 51200 ~ "Others",
+                                                                bpl == 51300 ~ "Others",
+                                                                bpl == 51500 ~ "Others",
+                                                                bpl == 51700 ~ "Others",
+                                                                bpl == 51800 ~ "Others",
+                                                                bpl == 52000 ~ "Others",
+                                                                bpl == 52100 ~ "Others",
+                                                                bpl == 52110 ~ "Others",
+                                                                bpl == 52130 ~ "Others",
+                                                                bpl == 52140 ~ "Others",
+                                                                bpl == 52150 ~ "Others",
+                                                                bpl == 52200 ~ "Others",
+                                                                bpl == 53000 ~ "Others",
+                                                                bpl == 53400 ~ "Others",
+                                                                bpl == 53500 ~ "Others",
+                                                                bpl == 53700 ~ "Others",
+                                                                bpl == 54100 ~ "Others",
+                                                                bpl == 54350 ~ "Others",
+                                                                bpl == 54400 ~ "Others",
+                                                                bpl == 55300 ~ "Others",
+                                                                bpl == 55400 ~ "Others",
+                                                                bpl == 59900 ~ "Others",
+                                                                bpl == 60012 ~ "Others",
+                                                                bpl == 60014 ~ "Others",
+                                                                bpl == 60016 ~ "Others",
+                                                                bpl == 60018 ~ "Others",
+                                                                bpl == 60023 ~ "Others",
+                                                                bpl == 60031 ~ "Others",
+                                                                bpl == 60032 ~ "Others",
+                                                                bpl == 60033 ~ "Others",
+                                                                bpl == 60034 ~ "Others",
+                                                                bpl == 60037 ~ "Others",
+                                                                bpl == 60040 ~ "Others",
+                                                                bpl == 60044 ~ "Others",
+                                                                bpl == 60045 ~ "Others",
+                                                                bpl == 60050 ~ "Others",
+                                                                bpl == 60070 ~ "Others",
+                                                                bpl == 60094 ~ "Others",
+                                                                bpl == 60096 ~ "Others",
+                                                                bpl == 60099 ~ "Others",
+                                                                bpl == 70010 ~ "Others",
+                                                                bpl == 71021 ~ "Others",
+                                                                bpl == 71023 ~ "Others",
+                                                                bpl == 71024 ~ "Others",
+                                                                bpl == 72000 ~ "Others",
+                                                                bpl == 9900 ~ "United States"))
+
+salary_gap_set$bpl <- salary_gap_set_bpl$bpl
+salary_gap_set$bpl[is.na(salary_gap_set$bpl)] <- "Not avaliable"
+
+factor_bpl<- factor(salary_gap_set$bpl, levels = c("Others",
+                                                   "United States"))
+
+levels(factor_bpl)
+summary(factor_bpl)
+
+#sch
+salary_gap_set_sch <- transmute(salary_gap_set, sch = case_when(sch == 0.0 ~ "No school",
+                                                                sch == 2.5 ~ "Grade 2",
+                                                                sch == 5.5 ~ "Grade 5",
+                                                                sch == 7.5 ~ "Grade 7",
+                                                                sch == 9.0 ~ "Grade 9",
+                                                                sch == 10.0 ~ "Grade 10",
+                                                                sch == 11.0 ~ "Grade 11",
+                                                                sch == 12.0 ~ "Grade 12",
+                                                                sch == 13.0 ~ "Some collage",
+                                                                sch == 14.0 ~ "Associate's degree",
+                                                                sch == 16.0 ~ "Bachelor's degree",
+                                                                sch == 18.0 ~ "Advanced degree"))
+
+salary_gap_set$sch <- salary_gap_set_sch$sch
+salary_gap_set$sch[is.na(salary_gap_set$sch)] <- "Not avaliable"
+
+factor_sch<- factor(salary_gap_set$sch, levels = c("None",
+                                                   "Grade 2",
+                                                   "Grade 5",
+                                                   "Grade 7",
+                                                   "Grade 9",
+                                                   "Grade 10",
+                                                   "Grade 11",
+                                                   "Grade 12",
+                                                   "Some collage",
+                                                   "Associate's degree",
+                                                   "Bachelor's degree",
+                                                   "Advanced degree"))
+
+levels(factor_sch)
+summary(factor_sch)
+
+#educ99
+salary_gap_set_educ99 <- transmute(salary_gap_set, educ99 = case_when(educ99 == 1 ~ "No school",
+                                                                      educ99 == 4 ~ "1st-4th grades",
+                                                                      educ99 == 5 ~ "5th-8th grades",
+                                                                      educ99 == 6 ~ "9th grade",
+                                                                      educ99 == 7 ~ "10th grade",
+                                                                      educ99 == 8 ~ "11th grade",
+                                                                      educ99 == 9 ~ "12th grade",
+                                                                      educ99 == 10 ~ "High school",
+                                                                      educ99 == 11 ~ "Some collage",
+                                                                      educ99 == 13 ~ "Associate's degree 1",
+                                                                      educ99 == 14 ~ "Associate's degree 2",
+                                                                      educ99 == 15 ~ "Bachelor's degree",
+                                                                      educ99 == 16 ~ "Master's degree",
+                                                                      educ99 == 17 ~ "Professional degree",
+                                                                      educ99 == 18 ~ "Doctoral degree"))
+
+salary_gap_set$educ99 <- salary_gap_set_educ99$educ99
+salary_gap_set$educ99[is.na(salary_gap_set$educ99)] <- "Not avaliable"
+
+factor_educ99<- factor(salary_gap_set$educ99, levels = c("No school",
+                                                         "1st-4th grades",
+                                                         "5th-8th grades",
+                                                         "9th grade",
+                                                         "10th grade",
+                                                         "11th grade",
+                                                         "12th grade",
+                                                         "High school",
+                                                         "Some collage",
+                                                         "Associate's degree 1",
+                                                         "Associate's degree 2",
+                                                         "Bachelor's degree",
+                                                         "Master's degree",
+                                                         "Professional degree",
+                                                         "Doctoral degree"))
+
+levels(factor_educ99)
+summary(factor_educ99)
+
+#empstat
+adj_empstat <- ifelse(salary_gap_set$empstat == 10, "At work", "Has job, not at work now") 
+salary_gap_set$empstat <- adj_empstat
+
+factor_empstat <- factor(salary_gap_set$empstat, levels = c("At work", "Has job, not at work now"))
+levels(factor_empstat)
+summary(factor_empstat)
+
+#classwkr
+salary_gap_set_classwkr <- transmute(salary_gap_set, classwkr = case_when(classwkr == 21 ~ "Wage/salary, private sector",
+                                                                          classwkr == 25 ~ "Federal govt employee",
+                                                                          classwkr == 27 ~ "State govt employee",
+                                                                          classwkr == 28 ~ "Local govt employee"))
+
+salary_gap_set$classwkr <- salary_gap_set_classwkr$classwkr
+salary_gap_set$classwkr[is.na(salary_gap_set$classwkr)] <- "Not avaliable"
+
+factor_classwkr <- factor(salary_gap_set$classwkr, levels = c("Wage/salary, private sector",
+                                                              "Federal govt employee",
+                                                              "State govt employee",
+                                                              "Local govt employee"))
+
+levels(factor_classwkr)
+summary(factor_classwkr)
+
+#ftype
+salary_gap_set_ftype <- transmute(salary_gap_set, ftype = case_when(ftype == 1 ~ "Primary family",
+                                                                    ftype == 2 ~ "Nonfamily householder",
+                                                                    ftype == 3 ~ "Related subfamily",
+                                                                    ftype == 4 ~ "Unrelated subfamily",
+                                                                    ftype == 5 ~ "Secondary individual"))
+
+salary_gap_set$ftype <- salary_gap_set_ftype$ftype
+salary_gap_set$ftype[is.na(salary_gap_set$ftype)] <- "Not avaliable"
+
+factor_ftype <- factor(salary_gap_set$ftype, levels = c("Primary family",
+                                                        "Nonfamily householder",
+                                                        "Related subfamily",
+                                                        "Unrelated subfamily",
+                                                        "Secondary individual"))
+
+levels(factor_ftype)
+summary(factor_ftype)
+
+#adj_ind
+salary_gap_set_adj_ind <- transmute(salary_gap_set, adj_ind = case_when(adj_ind == 17 ~ "Crop production",
+                                                                        adj_ind == 18 ~ "Animal production",
+                                                                        adj_ind == 19 ~ "Forestry except logging",
+                                                                        adj_ind == 27 ~ "Logging",
+                                                                        adj_ind == 28 ~ "Fishing, hunting and trapping",
+                                                                        adj_ind == 29 ~ "Support activities for agriculture and forestry",
+                                                                        adj_ind == 37 ~ "Oil and gas extraction",
+                                                                        adj_ind == 38 ~ "Coal mining",
+                                                                        adj_ind == 39 ~ "Metal ore mining",
+                                                                        adj_ind == 47 ~ "Nonmetallic mineral mining and quarrying (Includes 0480 starting May 2012)",
+                                                                        adj_ind == 49 ~ "Support activities for mining",
+                                                                        adj_ind == 57 ~ "Electric power generation, transmission and distribution",
+                                                                        adj_ind == 59 ~ "Electric and gas, and other combinations",
+                                                                        adj_ind == 67 ~ "Water, steam, air conditioning, and irrigation systems",
+                                                                        adj_ind == 68 ~ "Sewage treatment facilities",
+                                                                        adj_ind == 69 ~ "Not specified utilities",
+                                                                        adj_ind == 77 ~ "Construction",
+                                                                        adj_ind == 107 ~ "Animal food, grain, and oilseed milling",
+                                                                        adj_ind == 108 ~ "Sugar and confectionery products",
+                                                                        adj_ind == 109 ~ "Fruit and vegetable preserving and specialty food manufacturing",
+                                                                        adj_ind == 117 ~ "Dairy product manufacturing",
+                                                                        adj_ind == 118 ~ "Animal slaughtering and processing",
+                                                                        adj_ind == 119 ~ "Retail bakeries",
+                                                                        adj_ind == 127 ~ "Bakeries, except retail",
+                                                                        adj_ind == 128 ~ "Seafood and other miscellaneous foods, n.e.c.",
+                                                                        adj_ind == 129 ~ "Not specified food industries",
+                                                                        adj_ind == 137 ~ "Beverage manufacturing",
+                                                                        adj_ind == 139 ~ "Tobacco manufacturing",
+                                                                        adj_ind == 148 ~ "Fabric mills, except knitting",
+                                                                        adj_ind == 149 ~ "Textile and fabric finishing and coating mills",
+                                                                        adj_ind == 157 ~ "Carpet and rug mills",
+                                                                        adj_ind == 159 ~ "Textile product mills, except carpet and rug",
+                                                                        adj_ind == 168 ~ "Cut and sew apparel manufacturing",
+                                                                        adj_ind == 177 ~ "Footwear manufacturing",
+                                                                        adj_ind == 187 ~ "Pulp, paper, and paperboard mills",
+                                                                        adj_ind == 188 ~ "Paperboard containers and boxes",
+                                                                        adj_ind == 189 ~ "Miscellaneous paper and pulp products",
+                                                                        adj_ind == 199 ~ "Printing and related support activities",
+                                                                        adj_ind == 207 ~ "Petroleum refining",
+                                                                        adj_ind == 209 ~ "Miscellaneous petroleum and coal products",
+                                                                        adj_ind == 217 ~ "Resin, synthetic rubber and fibers, and filaments manufacturing",
+                                                                        adj_ind == 218 ~ "Agricultural chemical manufacturing",
+                                                                        adj_ind == 219 ~ "Pharmaceutical and medicine manufacturing",
+                                                                        adj_ind == 227 ~ "Paint, coating, and adhesives manufacturing",
+                                                                        adj_ind == 228 ~ "Soap, cleaning compound, and cosmetic manufacturing",
+                                                                        adj_ind == 229 ~ "Industrial and miscellaneous chemicals",
+                                                                        adj_ind == 237 ~ "Plastics product manufacturing",
+                                                                        adj_ind == 239 ~ "Rubber product, except tire, manufacturing",
+                                                                        adj_ind == 247 ~ "Pottery, ceramics, and plumbing fixture manufacturing",
+                                                                        adj_ind == 249 ~ "Glass and glass product manufacturing",
+                                                                        adj_ind == 257 ~ "Cement, concrete, lime, and gypsum product manufacturing",
+                                                                        adj_ind == 259 ~ "Miscellaneous nonmetallic mineral product manufacturing",
+                                                                        adj_ind == 267 ~ "Iron and steel mills and steel product manufacturing",
+                                                                        adj_ind == 277 ~ "Foundries",
+                                                                        adj_ind == 278 ~ "Metal forgings and stampings",
+                                                                        adj_ind == 279 ~ "Cutlery and hand tool manufacturing",
+                                                                        adj_ind == 287 ~ "Structural metals, and boiler, tank, and shipping container manufacturing",
+                                                                        adj_ind == 288 ~ "Machine shops; turned product; screw, nut, and bolt manufacturing",
+                                                                        adj_ind == 289 ~ "Coating, engraving, heat treating and allied activities",
+                                                                        adj_ind == 297 ~ "Ordnance",
+                                                                        adj_ind == 298 ~ "Miscellaneous fabricated metal products manufacturing",
+                                                                        adj_ind == 299 ~ "Not specified metal industries",
+                                                                        adj_ind == 307 ~ "Agricultural implement manufacturing",
+                                                                        adj_ind == 308 ~ "Construction, and mining and oil and gas field machinery manufacturing",
+                                                                        adj_ind == 309 ~ "Commercial and service industry machinery manufacturing",
+                                                                        adj_ind == 317 ~ "Metalworking machinery manufacturing",
+                                                                        adj_ind == 318 ~ "Engines, turbines, and power transmission equipment manufacturing",
+                                                                        adj_ind == 319 ~ "Machinery manufacturing, n.e.c.",
+                                                                        adj_ind == 336 ~ "Computer and peripheral equipment manufacturing",
+                                                                        adj_ind == 337 ~ "Communications, and audio and video equipment manufacturing",
+                                                                        adj_ind == 338 ~ "Navigational, measuring, electromedical, and control instruments manufacturing",
+                                                                        adj_ind == 339 ~ "Electronic component and product manufacturing, n.e.c.",
+                                                                        adj_ind == 347 ~ "Household appliance manufacturing",
+                                                                        adj_ind == 349 ~ "Electrical lighting and electrical equipment manufacturing, and other electrical component manufacturing, n.e.c.",
+                                                                        adj_ind == 357 ~ "Motor vehicles and motor vehicle equipment manufacturing",
+                                                                        adj_ind == 358 ~ "Aircraft and parts manufacturing",
+                                                                        adj_ind == 359 ~ "Aerospace product and parts manufacturing",
+                                                                        adj_ind == 368 ~ "Ship and boat building",
+                                                                        adj_ind == 377 ~ "Sawmills and wood preservation",
+                                                                        adj_ind == 378 ~ "Veneer, plywood, and engineered wood products",
+                                                                        adj_ind == 379 ~ "Prefabricated wood buildings and mobile homes",
+                                                                        adj_ind == 387 ~ "Miscellaneous wood products",
+                                                                        adj_ind == 389 ~ "Furniture and related product manufacturing",
+                                                                        adj_ind == 396 ~ "Medical equipment and supplies manufacturing",
+                                                                        adj_ind == 397 ~ "Sporting and athletic goods, and doll, toy and game manufacturing",
+                                                                        adj_ind == 398 ~ "Miscellaneous manufacturing, n.e.c.",
+                                                                        adj_ind == 399 ~ "Not specified manufacturing industries",
+                                                                        adj_ind == 407 ~ "Motor vehicles, parts and supplies, merchant wholesalers",
+                                                                        adj_ind == 408 ~ "Furniture and home furnishing, merchant wholesalers",
+                                                                        adj_ind == 409 ~ "Lumber and other construction materials, merchant wholesalers",
+                                                                        adj_ind == 417 ~ "Professional and commercial equipment and supplies, merchant wholesalers",
+                                                                        adj_ind == 418 ~ "Metals and minerals, except petroleum, merchant wholesalers",
+                                                                        adj_ind == 419 ~ "Electrical and electronic goods, merchant wholesalers",
+                                                                        adj_ind == 426 ~ "Hardware, plumbing and heating equipment, and supplies, merchant wholesalers",
+                                                                        adj_ind == 427 ~ "Machinery, equipment, and supplies, merchant wholesalers",
+                                                                        adj_ind == 428 ~ "Recyclable material, merchant wholesalers",
+                                                                        adj_ind == 429 ~ "Miscellaneous durable goods, merchant wholesalers",
+                                                                        adj_ind == 437 ~ "Paper and paper products, merchant wholesalers",
+                                                                        adj_ind == 438 ~ "Drugs, sundries, and chemical and allied products, merchant wholesalers",
+                                                                        adj_ind == 439 ~ "Apparel, fabrics, and notions, merchant wholesalers",
+                                                                        adj_ind == 447 ~ "Groceries and related products, merchant wholesalers",
+                                                                        adj_ind == 448 ~ "Farm product raw materials, merchant wholesalers",
+                                                                        adj_ind == 449 ~ "Petroleum and petroleum products, merchant wholesalers",
+                                                                        adj_ind == 456 ~ "Alcoholic beverages, merchant wholesalers",
+                                                                        adj_ind == 458 ~ "Miscellaneous nondurable goods, merchant wholesalers",
+                                                                        adj_ind == 459 ~ "Not specified wholesale trade",
+                                                                        adj_ind == 467 ~ "Automobile dealers",
+                                                                        adj_ind == 468 ~ "Other motor vehicle dealers",
+                                                                        adj_ind == 469 ~ "Auto parts, accessories, and tire stores",
+                                                                        adj_ind == 477 ~ "Furniture and home furnishings stores",
+                                                                        adj_ind == 478 ~ "Household appliance stores",
+                                                                        adj_ind == 479 ~ "Radio, TV, and computer stores",
+                                                                        adj_ind == 487 ~ "Building material and supplies dealers",
+                                                                        adj_ind == 488 ~ "Hardware stores",
+                                                                        adj_ind == 489 ~ "Lawn and garden equipment and supplies stores",
+                                                                        adj_ind == 497 ~ "Grocery stores",
+                                                                        adj_ind == 498 ~ "Specialty food stores",
+                                                                        adj_ind == 499 ~ "Beer, wine, and liquor stores",
+                                                                        adj_ind == 507 ~ "Pharmacies and drug stores",
+                                                                        adj_ind == 508 ~ "Health and personal care, except drug, stores",
+                                                                        adj_ind == 509 ~ "Gasoline stations",
+                                                                        adj_ind == 517 ~ "Clothing stores",
+                                                                        adj_ind == 518 ~ "Shoe stores",
+                                                                        adj_ind == 519 ~ "Jewelry, luggage, and leather goods stores",
+                                                                        adj_ind == 527 ~ "Sporting goods, camera, and hobby and toy stores",
+                                                                        adj_ind == 528 ~ "Sewing, needlework and piece goods stores",
+                                                                        adj_ind == 529 ~ "Music stores",
+                                                                        adj_ind == 538 ~ "Department stores and discount stores",
+                                                                        adj_ind == 539 ~ "Miscellaneous general merchandise stores",
+                                                                        adj_ind == 548 ~ "Office supplies and stationery stores",
+                                                                        adj_ind == 549 ~ "Used merchandise stores",
+                                                                        adj_ind == 557 ~ "Gift, novelty, and souvenir shops",
+                                                                        adj_ind == 558 ~ "Miscellaneous retail stores",
+                                                                        adj_ind == 559 ~ "Electronic shopping",
+                                                                        adj_ind == 568 ~ "Fuel dealers",
+                                                                        adj_ind == 569 ~ "Other direct selling establishments",
+                                                                        adj_ind == 579 ~ "Not specified retail trade",
+                                                                        adj_ind == 607 ~ "Air transportation",
+                                                                        adj_ind == 608 ~ "Rail transportation",
+                                                                        adj_ind == 609 ~ "Water transportation",
+                                                                        adj_ind == 617 ~ "Truck transportation",
+                                                                        adj_ind == 618 ~ "Bus service and urban transit",
+                                                                        adj_ind == 619 ~ "Taxi and limousine service",
+                                                                        adj_ind == 627 ~ "Pipeline transportation",
+                                                                        adj_ind == 628 ~ "Scenic and sightseeing transportation",
+                                                                        adj_ind == 629 ~ "Services incidental to transportation",
+                                                                        adj_ind == 637 ~ "Postal Service",
+                                                                        adj_ind == 638 ~ "Couriers and messengers",
+                                                                        adj_ind == 639 ~ "Warehousing and storage",
+                                                                        adj_ind == 647 ~ "Newspaper publishers",
+                                                                        adj_ind == 648 ~ "Periodical, book, and directory publishers",
+                                                                        adj_ind == 649 ~ "Software publishers",
+                                                                        adj_ind == 657 ~ "Motion pictures and video industries",
+                                                                        adj_ind == 667 ~ "Radio and television broadcasting and cable subscription programming",
+                                                                        adj_ind == 668 ~ "Wired telecommunications carriers",
+                                                                        adj_ind == 669 ~ "Other telecommunication services",
+                                                                        adj_ind == 677 ~ "Libraries and archives",
+                                                                        adj_ind == 678 ~ "Other information services",
+                                                                        adj_ind == 679 ~ "Data processing services",
+                                                                        adj_ind == 687 ~ "Banking and related activities",
+                                                                        adj_ind == 688 ~ "Savings institutions, including credit unions",
+                                                                        adj_ind == 689 ~ "Non-depository credit and related activities",
+                                                                        adj_ind == 697 ~ "Securities, commodities, funds, trusts, and other financial investments",
+                                                                        adj_ind == 699 ~ "Insurance carriers and related activities",
+                                                                        adj_ind == 707 ~ "Real estate",
+                                                                        adj_ind == 708 ~ "Automotive equipment rental and leasing",
+                                                                        adj_ind == 718 ~ "Other consumer goods rental",
+                                                                        adj_ind == 719 ~ "Commercial, industrial, and other intangible assets rental and leasing",
+                                                                        adj_ind == 727 ~ "Legal services",
+                                                                        adj_ind == 728 ~ "Accounting, tax preparation, bookkeeping and payroll services",
+                                                                        adj_ind == 729 ~ "Architectural, engineering, and related services",
+                                                                        adj_ind == 737 ~ "Specialized design services",
+                                                                        adj_ind == 738 ~ "Computer systems design and related services",
+                                                                        adj_ind == 739 ~ "Management, scientific and technical consulting services",
+                                                                        adj_ind == 746 ~ "Scientific research and development services",
+                                                                        adj_ind == 747 ~ "Advertising and related services",
+                                                                        adj_ind == 748 ~ "Veterinary services",
+                                                                        adj_ind == 749 ~ "Other professional, scientific and technical services",
+                                                                        adj_ind == 757 ~ "Management of companies and enterprises",
+                                                                        adj_ind == 758 ~ "Employment services",
+                                                                        adj_ind == 759 ~ "Business support services",
+                                                                        adj_ind == 767 ~ "Travel arrangements and reservation services",
+                                                                        adj_ind == 768 ~ "Investigation and security services",
+                                                                        adj_ind == 769 ~ "Services to buildings and dwellings",
+                                                                        adj_ind == 777 ~ "Landscaping services",
+                                                                        adj_ind == 778 ~ "Other administrative and other support services",
+                                                                        adj_ind == 779 ~ "Waste management and remediation services",
+                                                                        adj_ind == 786 ~ "Elementary and secondary schools",
+                                                                        adj_ind == 787 ~ "Colleges and universities, including junior colleges",
+                                                                        adj_ind == 788 ~ "Business, technical, and trade schools and training",
+                                                                        adj_ind == 789 ~ "Other schools and instruction, and educational support services",
+                                                                        adj_ind == 797 ~ "Offices of physicians",
+                                                                        adj_ind == 798 ~ "Offices of dentists",
+                                                                        adj_ind == 799 ~ "Office of chiropractors",
+                                                                        adj_ind == 807 ~ "Offices of optometrists",
+                                                                        adj_ind == 808 ~ "Offices of other health practitioners",
+                                                                        adj_ind == 809 ~ "Outpatient care centers",
+                                                                        adj_ind == 817 ~ "Home health care services",
+                                                                        adj_ind == 818 ~ "Other health care services",
+                                                                        adj_ind == 819 ~ "Hospitals",
+                                                                        adj_ind == 827 ~ "Nursing care facilities",
+                                                                        adj_ind == 829 ~ "Residential care facilities, without nursing",
+                                                                        adj_ind == 837 ~ "Individual and family services",
+                                                                        adj_ind == 838 ~ "Community food and housing, and emergency services",
+                                                                        adj_ind == 839 ~ "Vocational rehabilitation services",
+                                                                        adj_ind == 847 ~ "Child day care services",
+                                                                        adj_ind == 856 ~ "Independent artists, performing arts, spectator sports, and related industries",
+                                                                        adj_ind == 857 ~ "Museums, art galleries, historical sites, and similar institutions",
+                                                                        adj_ind == 858 ~ "Bowling centers",
+                                                                        adj_ind == 859 ~ "Other amusement, gambling, and recreation industries",
+                                                                        adj_ind == 866 ~ "Traveler accommodation",
+                                                                        adj_ind == 867 ~ "Recreational vehicle parks and camps, and rooming and boarding houses",
+                                                                        adj_ind == 868 ~ "Restaurants and other food services",
+                                                                        adj_ind == 869 ~ "Drinking places, alcoholic beverages",
+                                                                        adj_ind == 877 ~ "Automotive repair and maintenance",
+                                                                        adj_ind == 878 ~ "Car washes",
+                                                                        adj_ind == 879 ~ "Electronic and precision equipment repair and maintenance",
+                                                                        adj_ind == 887 ~ "Commercial and industrial machinery and equipment repair and maintenance"
+))
+
+salary_gap_set$adj_ind <- salary_gap_set_adj_ind$adj_ind
+salary_gap_set$adj_ind[is.na(salary_gap_set$adj_ind)] <- "Not avaliable"
+
+factor_adj_ind <- factor(salary_gap_set$adj_ind, levels = c("Crop production",
+                                                            "Animal production",
+                                                            "Forestry except logging",
+                                                            "Logging",
+                                                            "Fishing, hunting and trapping",
+                                                            "Support activities for agriculture and forestry",
+                                                            "Oil and gas extraction",
+                                                            "Coal mining",
+                                                            "Metal ore mining",
+                                                            "Nonmetallic mineral mining and quarrying (Includes 0480 starting May 2012)",
+                                                            "Support activities for mining",
+                                                            "Electric power generation, transmission and distribution",
+                                                            "Electric and gas, and other combinations",
+                                                            "Water, steam, air conditioning, and irrigation systems",
+                                                            "Sewage treatment facilities",
+                                                            "Not specified utilities",
+                                                            "Construction",
+                                                            "Animal food, grain, and oilseed milling",
+                                                            "Sugar and confectionery products",
+                                                            "Fruit and vegetable preserving and specialty food manufacturing",
+                                                            "Dairy product manufacturing",
+                                                            "Animal slaughtering and processing",
+                                                            "Retail bakeries",
+                                                            "Bakeries, except retail",
+                                                            "Seafood and other miscellaneous foods, n.e.c.",
+                                                            "Not specified food industries",
+                                                            "Beverage manufacturing",
+                                                            "Tobacco manufacturing",
+                                                            "Fabric mills, except knitting",
+                                                            "Textile and fabric finishing and coating mills",
+                                                            "Carpet and rug mills",
+                                                            "Textile product mills, except carpet and rug",
+                                                            "Cut and sew apparel manufacturing",
+                                                            "Footwear manufacturing",
+                                                            "Pulp, paper, and paperboard mills",
+                                                            "Paperboard containers and boxes",
+                                                            "Miscellaneous paper and pulp products",
+                                                            "Printing and related support activities",
+                                                            "Petroleum refining",
+                                                            "Miscellaneous petroleum and coal products",
+                                                            "Resin, synthetic rubber and fibers, and filaments manufacturing",
+                                                            "Agricultural chemical manufacturing",
+                                                            "Pharmaceutical and medicine manufacturing",
+                                                            "Paint, coating, and adhesives manufacturing",
+                                                            "Soap, cleaning compound, and cosmetic manufacturing",
+                                                            "Industrial and miscellaneous chemicals",
+                                                            "Plastics product manufacturing",
+                                                            "Rubber product, except tire, manufacturing",
+                                                            "Pottery, ceramics, and plumbing fixture manufacturing",
+                                                            "Glass and glass product manufacturing",
+                                                            "Cement, concrete, lime, and gypsum product manufacturing",
+                                                            "Miscellaneous nonmetallic mineral product manufacturing",
+                                                            "Iron and steel mills and steel product manufacturing",
+                                                            "Foundries",
+                                                            "Metal forgings and stampings",
+                                                            "Cutlery and hand tool manufacturing",
+                                                            "Structural metals, and boiler, tank, and shipping container manufacturing",
+                                                            "Machine shops; turned product; screw, nut, and bolt manufacturing",
+                                                            "Coating, engraving, heat treating and allied activities",
+                                                            "Ordnance",
+                                                            "Miscellaneous fabricated metal products manufacturing",
+                                                            "Not specified metal industries",
+                                                            "Agricultural implement manufacturing",
+                                                            "Construction, and mining and oil and gas field machinery manufacturing",
+                                                            "Commercial and service industry machinery manufacturing",
+                                                            "Metalworking machinery manufacturing",
+                                                            "Engines, turbines, and power transmission equipment manufacturing",
+                                                            "Machinery manufacturing, n.e.c.",
+                                                            "Computer and peripheral equipment manufacturing",
+                                                            "Communications, and audio and video equipment manufacturing",
+                                                            "Navigational, measuring, electromedical, and control instruments manufacturing",
+                                                            "Electronic component and product manufacturing, n.e.c.",
+                                                            "Household appliance manufacturing",
+                                                            "Electrical lighting and electrical equipment manufacturing, and other electrical component manufacturing, n.e.c.",
+                                                            "Motor vehicles and motor vehicle equipment manufacturing",
+                                                            "Aircraft and parts manufacturing",
+                                                            "Aerospace product and parts manufacturing",
+                                                            "Ship and boat building",
+                                                            "Sawmills and wood preservation",
+                                                            "Veneer, plywood, and engineered wood products",
+                                                            "Prefabricated wood buildings and mobile homes",
+                                                            "Miscellaneous wood products",
+                                                            "Furniture and related product manufacturing",
+                                                            "Medical equipment and supplies manufacturing",
+                                                            "Sporting and athletic goods, and doll, toy and game manufacturing",
+                                                            "Miscellaneous manufacturing, n.e.c.",
+                                                            "Not specified manufacturing industries",
+                                                            "Motor vehicles, parts and supplies, merchant wholesalers",
+                                                            "Furniture and home furnishing, merchant wholesalers",
+                                                            "Lumber and other construction materials, merchant wholesalers",
+                                                            "Professional and commercial equipment and supplies, merchant wholesalers",
+                                                            "Metals and minerals, except petroleum, merchant wholesalers",
+                                                            "Electrical and electronic goods, merchant wholesalers",
+                                                            "Hardware, plumbing and heating equipment, and supplies, merchant wholesalers",
+                                                            "Machinery, equipment, and supplies, merchant wholesalers",
+                                                            "Recyclable material, merchant wholesalers",
+                                                            "Miscellaneous durable goods, merchant wholesalers",
+                                                            "Paper and paper products, merchant wholesalers",
+                                                            "Drugs, sundries, and chemical and allied products, merchant wholesalers",
+                                                            "Apparel, fabrics, and notions, merchant wholesalers",
+                                                            "Groceries and related products, merchant wholesalers",
+                                                            "Farm product raw materials, merchant wholesalers",
+                                                            "Petroleum and petroleum products, merchant wholesalers",
+                                                            "Alcoholic beverages, merchant wholesalers",
+                                                            "Miscellaneous nondurable goods, merchant wholesalers",
+                                                            "Not specified wholesale trade",
+                                                            "Automobile dealers",
+                                                            "Other motor vehicle dealers",
+                                                            "Auto parts, accessories, and tire stores",
+                                                            "Furniture and home furnishings stores",
+                                                            "Household appliance stores",
+                                                            "Radio, TV, and computer stores",
+                                                            "Building material and supplies dealers",
+                                                            "Hardware stores",
+                                                            "Lawn and garden equipment and supplies stores",
+                                                            "Grocery stores",
+                                                            "Specialty food stores",
+                                                            "Beer, wine, and liquor stores",
+                                                            "Pharmacies and drug stores",
+                                                            "Health and personal care, except drug, stores",
+                                                            "Gasoline stations",
+                                                            "Clothing stores",
+                                                            "Shoe stores",
+                                                            "Jewelry, luggage, and leather goods stores",
+                                                            "Sporting goods, camera, and hobby and toy stores",
+                                                            "Sewing, needlework and piece goods stores",
+                                                            "Music stores",
+                                                            "Department stores and discount stores",
+                                                            "Miscellaneous general merchandise stores",
+                                                            "Office supplies and stationery stores",
+                                                            "Used merchandise stores",
+                                                            "Gift, novelty, and souvenir shops",
+                                                            "Miscellaneous retail stores",
+                                                            "Electronic shopping",
+                                                            "Fuel dealers",
+                                                            "Other direct selling establishments",
+                                                            "Not specified retail trade",
+                                                            "Air transportation",
+                                                            "Rail transportation",
+                                                            "Water transportation",
+                                                            "Truck transportation",
+                                                            "Bus service and urban transit",
+                                                            "Taxi and limousine service",
+                                                            "Pipeline transportation",
+                                                            "Scenic and sightseeing transportation",
+                                                            "Services incidental to transportation",
+                                                            "Postal Service",
+                                                            "Couriers and messengers",
+                                                            "Warehousing and storage",
+                                                            "Newspaper publishers",
+                                                            "Periodical, book, and directory publishers",
+                                                            "Software publishers",
+                                                            "Motion pictures and video industries",
+                                                            "Radio and television broadcasting and cable subscription programming",
+                                                            "Wired telecommunications carriers",
+                                                            "Other telecommunication services",
+                                                            "Libraries and archives",
+                                                            "Other information services",
+                                                            "Data processing services",
+                                                            "Banking and related activities",
+                                                            "Savings institutions, including credit unions",
+                                                            "Non-depository credit and related activities",
+                                                            "Securities, commodities, funds, trusts, and other financial investments",
+                                                            "Insurance carriers and related activities",
+                                                            "Real estate",
+                                                            "Automotive equipment rental and leasing",
+                                                            "Other consumer goods rental",
+                                                            "Commercial, industrial, and other intangible assets rental and leasing",
+                                                            "Legal services",
+                                                            "Accounting, tax preparation, bookkeeping and payroll services",
+                                                            "Architectural, engineering, and related services",
+                                                            "Specialized design services",
+                                                            "Computer systems design and related services",
+                                                            "Management, scientific and technical consulting services",
+                                                            "Scientific research and development services",
+                                                            "Advertising and related services",
+                                                            "Veterinary services",
+                                                            "Other professional, scientific and technical services",
+                                                            "Management of companies and enterprises",
+                                                            "Employment services",
+                                                            "Business support services",
+                                                            "Travel arrangements and reservation services",
+                                                            "Investigation and security services",
+                                                            "Services to buildings and dwellings",
+                                                            "Landscaping services",
+                                                            "Other administrative and other support services",
+                                                            "Waste management and remediation services",
+                                                            "Elementary and secondary schools",
+                                                            "Colleges and universities, including junior colleges",
+                                                            "Business, technical, and trade schools and training",
+                                                            "Other schools and instruction, and educational support services",
+                                                            "Offices of physicians",
+                                                            "Offices of dentists",
+                                                            "Office of chiropractors",
+                                                            "Offices of optometrists",
+                                                            "Offices of other health practitioners",
+                                                            "Outpatient care centers",
+                                                            "Home health care services",
+                                                            "Other health care services",
+                                                            "Hospitals",
+                                                            "Nursing care facilities",
+                                                            "Residential care facilities, without nursing",
+                                                            "Individual and family services",
+                                                            "Community food and housing, and emergency services",
+                                                            "Vocational rehabilitation services",
+                                                            "Child day care services",
+                                                            "Independent artists, performing arts, spectator sports, and related industries",
+                                                            "Museums, art galleries, historical sites, and similar institutions",
+                                                            "Bowling centers",
+                                                            "Other amusement, gambling, and recreation industries",
+                                                            "Traveler accommodation",
+                                                            "Recreational vehicle parks and camps, and rooming and boarding houses",
+                                                            "Restaurants and other food services",
+                                                            "Drinking places, alcoholic beverages",
+                                                            "Automotive repair and maintenance",
+                                                            "Car washes",
+                                                            "Electronic and precision equipment repair and maintenance",
+                                                            "Commercial and industrial machinery and equipment repair and maintenance"))
+
+levels(factor_adj_ind)
+summary(factor_adj_ind)
+
+```
+
+# descriptive categorical variables:
+```{r}
+n <- dim(salary_gap_set)[1]
+K <- dim(salary_gap_set)[2]
+
+descriptiva<-function(X, nom){
+  if (!(is.numeric(X))){ 
+    frecs<-table(as.factor(X), useNA="ifany")
+    print(frecs)
+    proportions<-frecs/n
+    #ojo, decidir si calcular porcentages con o sin missing values
+    pie(frecs, cex=0.6, main=paste("Pie of", nom))
+    barplot(frecs, las=3, cex.names=0.7, main=paste("Barplot of", nom), col=listOfColors)
+    print(paste("Number of modalities: ", length(frecs)))
+    print("Frequency table")
+    print(frecs)
+    print("Relative frequency table (proportions)")
+    print(proportions)
+    print("Frequency table sorted")
+    print(sort(frecs, decreasing=TRUE))
+    print("Relative frequency table (proportions) sorted")
+    print(sort(proportions, decreasing=TRUE))
+  }else{
+      hist(X, main=paste("Histogram of", nom))
+      boxplot(X, horizontal=TRUE, main=paste("Boxplot of",nom))
+      print("Extended Summary Statistics")
+      print(summary(X))
+      print(paste("sd: ", sd(X, na.rm=TRUE)))
+      print(paste("vc: ", sd(X, na.rm=TRUE)/mean(X, na.rm=TRUE)))
+  }
+}
+
+```
+
+```{r, echo=FALSE}
+#descriptiva(salary_gap_set[,3], names(salary_gap_set)[3])
+
+listOfColors<-rainbow(39)
+
+par(ask=TRUE)
+
+actives<-c(1:K)
+
+for(k in actives){
+  print(paste("variable ", k, ":", names(salary_gap_set)[k] ))
+  descriptiva(salary_gap_set[,k], names(salary_gap_set)[k])
+}
+par(ask=FALSE)
+
+
+#per exportar figures d'R per programa
+#dev.off()
+#png(file=mypath,width = 950, height = 800, units = "px")
+#dev.off()
+
+
+```
+
+# PCA 
+```{r}
+r <- salary_gap_set
+numeriques<-which(sapply(r,is.numeric))
+dnum<-r[,numeriques]
+view(r)
+
+# Variable correlation plot (it shows the relationships between all variables)
+pca <- PCA(X=dnum,scale.unit=TRUE,ncp=7,graph=TRUE)
+print(pca)
+
+# a. Scree plot. Specify how many principal components are selected
+# We selected 4 components
+pc <- prcomp(dnum, scale=TRUE)
+inerProj<- pc$sdev^2 
+totalIner<- sum(inerProj)
+pinerEix<- 100*inerProj/totalIner
+#pinerEix
+#sum(pinerEix[1:4])
+barplot(pinerEix,main="Scree plot",xlab="Components",ylab="Total Inertia in subespaces(%)")
+qplot(c(1:7),pinerEix[1:7]) + geom_line() + 
+  xlab("Component") + ylab("Total Inertia in subespaces(%)") + 
+  ggtitle("Scree Plot") + ylim(0, 40)
+
+fviz_screeplot(pc)
+
+# b. Factorial map visualisation: For each factorial map provide. Be sure you use a single landscape pager
+# for each single map in order to guarantee visibility of materials to the readers
+
+# STORAGE OF THE EIGENVALUES, EIGENVECTORS AND PROJECTIONS IN THE nd DIMENSIONS
+#View(pc$x)
+
+nd = 4
+dim(pc$x)
+dim(dnum)
+dnum[2000,]
+pc$x[2000,]
+
+Psi = pc$x[,1:nd]
+dim(Psi)
+Psi[2000,]
+
+# STORAGE OF LABELS FOR INDIVIDUALS AND VARIABLES
+iden = row.names(dnum)
+etiq = names(dnum)
+ze = rep(0,length(etiq)) 
+
+# PLOT OF INDIVIDUALS
+#select your axis
+eje1<-1
+eje2<-3
+
+plot(Psi[,eje1],Psi[,eje2], type="n", xlab="PC1", ylab="PC3")
+text(Psi[,eje1],Psi[,eje2],labels=iden, cex=0.5)
+axis(side=1, pos= 0, labels = F, col="cyan")
+axis(side=3, pos= 0, labels = F, col="cyan")
+axis(side=2, pos= 0, labels = F, col="cyan")
+
+#Projection of variables
+Phi = cor(dnum,Psi)
+#View(Phi)
+
+#select your axis
+X<-Phi[,eje1]
+Y<-Phi[,eje2]
+
+plot(Psi[,eje1],Psi[,eje2],type="n",xlim=c(-1,0.2), ylim=c(-1,1),xlab="PC1", ylab="PC3")
+axis(side=1, pos= 0, labels = F)
+axis(side=3, pos= 0, labels = F)
+axis(side=2, pos= 0, labels = F)
+axis(side=4, pos= 0, labels = F)
+arrows(ze, ze, X, Y, length = 0.07,col="blue")
+text(X,Y,labels=etiq,col="darkblue", cex=0.7)
+
+#MCA
+
+# PROJECTION OF ILLUSTRATIVE qualitative variables on individuals' map
+# PROJECTION OF INDIVIDUALS DIFFERENTIATING THE Sex, Race, Marst, Empstat and Ftype
+
+#Sex
+varcat=factor(r[,6])
+plot(Psi[,eje1],Psi[,eje2],col=varcat,xlab="PC1", ylab="PC3")
+axis(side=1, pos= 0, labels = F, col="darkgray")
+axis(side=3, pos= 0, labels = F, col="darkgray")
+axis(side=2, pos= 0, labels = F, col="darkgray")
+axis(side=4, pos= 0, labels = F, col="darkgray")
+legend("bottomleft",levels(factor(varcat)),pch=1,col=c(1,2), cex=0.6)
+
+#Race
+varcat=factor(r[,7])
+plot(Psi[,eje1],Psi[,eje2],col=varcat,xlab="PC1", ylab="PC3")
+axis(side=1, pos= 0, labels = F, col="darkgray")
+axis(side=3, pos= 0, labels = F, col="darkgray")
+axis(side=2, pos= 0, labels = F, col="darkgray")
+axis(side=4, pos= 0, labels = F, col="darkgray")
+legend("bottomleft",levels(factor(varcat)),pch=1,col=c(1,2,3,4), cex=0.6)
+
+#Marst
+varcat=factor(r[,8])
+plot(Psi[,eje1],Psi[,eje2],col=varcat,xlab="PC1", ylab="PC3")
+axis(side=1, pos= 0, labels = F, col="darkgray")
+axis(side=3, pos= 0, labels = F, col="darkgray")
+axis(side=2, pos= 0, labels = F, col="darkgray")
+axis(side=4, pos= 0, labels = F, col="darkgray")
+legend("bottomleft",levels(factor(varcat)),pch=1,col=c(1,2,3,4,5,6), cex=0.6)
+
+#Empstat
+varcat=factor(r[,12])
+plot(Psi[,eje1],Psi[,eje2],col=varcat,xlab="PC1", ylab="PC3")
+axis(side=1, pos= 0, labels = F, col="darkgray")
+axis(side=3, pos= 0, labels = F, col="darkgray")
+axis(side=2, pos= 0, labels = F, col="darkgray")
+axis(side=4, pos= 0, labels = F, col="darkgray")
+legend("bottomleft",levels(factor(varcat)),pch=1,col=c(1,2), cex=0.6)
+
+#Ftype
+varcat=factor(r[,17])
+plot(Psi[,eje1],Psi[,eje2],col=varcat,xlab="PC1", ylab="PC3")
+axis(side=1, pos= 0, labels = F, col="darkgray")
+axis(side=3, pos= 0, labels = F, col="darkgray")
+axis(side=2, pos= 0, labels = F, col="darkgray")
+axis(side=4, pos= 0, labels = F, col="darkgray")
+legend("bottomleft",levels(factor(varcat)),pch=1,col=c(1,2,3,4,5), cex=0.6)
+
+# Levels of the qualitative variables:
+# 2 = 9 levels
+# 3 = 5 levels
+# 4 = 11 levels
+# 6 = 2 levels
+# 7 = 4 levels
+# 8 = 6 levels
+# 9 = 108 levels
+# 10 = 12 levels
+# 11 = 15 levels
+# 12 = 2 levels
+# 13 = 4 levels
+# 17 = 5 levels
+# 20 = 219 levels
+# 21 = 13 levels
+
+#all qualitative together
+plot(Psi[,eje1],Psi[,eje2],type="n",xlim=c(-0.4,0.6), ylim=c(-0.5,1),xlab="PC1", ylab="PC3")
+axis(side=1, pos= 0, labels = F, col="darkgray")
+axis(side=3, pos= 0, labels = F, col="darkgray")
+axis(side=2, pos= 0, labels = F, col="darkgray")
+axis(side=4, pos= 0, labels = F, col="darkgray")
+
+#divide categoricals in several graphs if joint representation saturates
+
+#dcat<-c(2,3,4)
+dcat<-c(6,7,8)
+#dcat<-c(12,13,17)
+
+colors<-rainbow(length(dcat))
+
+c<-1
+for(k in dcat){
+  seguentColor<-colors[c]
+  fdic1 = tapply(Psi[,eje1],r[,k],mean)
+  fdic2 = tapply(Psi[,eje2],r[,k],mean) 
+  
+  text(fdic1,fdic2,labels=levels(factor(r[,k])),col=seguentColor, cex=0.6)
+  c<-c+1
+}
+legend("bottomleft",names(r)[dcat],pch=1,col=colors, cex=0.6)
+
+#Represent numerical variables in background
+
+plot(Psi[,eje1],Psi[,eje2],type="n",xlim=c(-1.5,1), ylim=c(-1,1),xlab="PC1", ylab="PC3")
+#plot(X,Y,type="none",xlim=c(min(X,0),max(X,0)))
+axis(side=1, pos= 0, labels = F, col="cyan")
+axis(side=3, pos= 0, labels = F, col="cyan")
+axis(side=2, pos= 0, labels = F, col="cyan")
+axis(side=4, pos= 0, labels = F, col="cyan")
+#add projections of numerical variables in background
+arrows(ze, ze, X, Y, length = 0.07,col="grey")
+text(X,Y,labels=etiq,col="grey", cex=0.7)
+
+#add centroids
+c<-1
+for(k in dcat){
+  seguentColor<-colors[c]
+  
+  fdic1 = tapply(Psi[,eje1],r[,k],mean)
+  fdic2 = tapply(Psi[,eje2],r[,k],mean) 
+  
+  #points(fdic1,fdic2,pch=16,col=seguentColor, labels=levels(r))
+  text(fdic1,fdic2,labels=levels(factor(r[,k])),col=seguentColor, cex=0.6)
+  c<-c+1
+}
+legend("bottomleft",names(r)[dcat],pch=1,col=colors, cex=0.6)
+
+#add ordinal qualitative variables. Ensure ordering is the correct
+
+dordi<-c(11) #educ99
+
+levels(factor(r[,dordi[1]]))
+#reorder modalities: when required
+r[,dordi[1]] <- factor(r[,dordi[1]], ordered=TRUE,  
+                       levels= c("No school","1st-4th grades","5th-8th grades","9th grade","10th grade", 
+                                 "11th grade","12th grade","High school","Some collage","Associate's degree 1",
+                                 "Associate's degree 2","Bachelor's degree","Master's degree",
+                                 "Professional degree","Doctoral degree"))
+levels(r[,dordi[1]])
+
+c<-1
+col<-1
+
+for(k in dordi){
+  seguentColor<-colors[col]
+  fdic1 = tapply(Psi[,eje1],r[,k],mean)
+  fdic2 = tapply(Psi[,eje2],r[,k],mean) 
+  #points(fdic1,fdic2,pch=16,col=seguentColor, labels=levels(r[,k]))
+  #connect modalities of qualitative variables
+  lines(fdic1,fdic2,pch=16,col="orange")
+  text(fdic1,fdic2,labels=levels(r[,k]),col="orange", cex=0.6)
+  c<-c+1
+  #col<-col+1
+}
+legend("topleft",names(r)[dordi],pch=1,col="orange", cex=0.6)
+
+```
+
+
+#Hierarchical cluster
+```{r}
+#set a list of numerical variables
+dcon <- data.frame (dnum)
+dim(dcon)
+
+#
+# CLUSTERING
+#
+
+
+# KMEANS RUN, BUT HOW MANY CLASSES?
+
+k1 <- kmeans(dcon,5)
+names(dcon)
+
+
+attributes(k1)
+
+k1$size
+
+k1$withinss
+
+k1$centers
+
+# LETS COMPUTE THE DECOMPOSITION OF INERTIA
+
+Bss <- sum(rowSums(k1$centers^2)*k1$size)
+Bss
+Wss <- sum(k1$withinss)
+Wss
+Tss <- k1$totss
+Tss
+
+Bss+Wss
+
+Ib1 <- 100*Bss/(Bss+Wss)
+Ib1
+
+# LETS REPEAT THE KMEANS RUN WITH K=5
+
+k2 <- kmeans(dcon,5)
+k2$size
+
+Bss <- sum(rowSums(k2$centers^2)*k2$size)
+Bss
+Wss <- sum(k2$withinss)
+Wss
+
+Ib2 <- 100*Bss/(Bss+Wss)
+Ib2
+Ib1
+
+k2$centers
+k1$centers
+
+#plot(k1$centers[,3],k1$centers[,2])
+
+table(k1$cluster, k2$cluster)
+
+# WHY WE HAVE OBTAINED DIFFERENT RESULTS?, AND WHICH RUN IS BETTER?
+
+# NOW TRY K=6
+
+k3 <- kmeans(dcon,6)
+k3$size
+
+Bss <- sum(rowSums(k3$centers^2)*k3$size)
+Wss <- sum(k3$withinss)
+
+Ib3 <- 100*Bss/(Bss+Wss)
+Ib3
+
+
+# HIERARCHICAL CLUSTERING
+view(salary_gap_set)
+d  <- dist(dcon[1:7,])
+print(d)
+h1 <- hclust(d,method="ward.D")  # NOTICE THE COST
+plot(h1)
+
+d  <- dist(dcon)
+h1 <- hclust(d,method="ward")  # NOTICE THE COST
+plot(h1)
+
+# BUT WE ONLY NEED WHERE THERE ARE THE LEAPS OF THE HEIGHT
+
+# WHERE ARE THER THE LEAPS? WHERE WILL YOU CUT THE DENDREOGRAM?, HOW MANY CLASSES WILL YOU OBTAIN?
+
+nc = 3
+
+c1 <- cutree(h1,nc)
+
+c1[1:7]
+
+nc = 5
+
+c5 <- cutree(h1,nc)
+
+c5[1:7]
+
+
+table(c1)
+table(c5)
+table(c1,c5)
+
+
+cdg <- aggregate(as.data.frame(dcon),list(c1),mean)
+cdg
+plot(cdg[,1], cdg[,2])
+
+# LETS SEE THE QUALITY OF THE HIERARCHICAL PARTITION
+
+
+
+Bss <- sum(rowSums(cdg^2)*as.numeric(table(c1)))
+
+Ib4 <- 100*Bss/Tss
+Ib4
+
+
+#move to Gower mixed distance to deal 
+#simoultaneously with numerical and qualitative data
+
+```
+# Partitional visualizer / Clustering plots
+```{r}
+# LETS SEE THE PARTITION VISUALLY
+
+
+plot(dcon$age,dcon$incwage,col=c1,main="Clustering of data in 3 classes", xlab="age", ylab="incwage")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$incwage,dcon$age,col=c1,main="Clustering of data in 3 classes", xlab="incwage", ylab="age")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$age,dcon$hrwage,col=c1,main="Clustering of data in 3 classes", xlab="age", ylab="hrwage")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$hrwage,dcon$age,col=c1,main="Clustering of data in 3 classes", xlab="hrwage", ylab="age")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$wkswork1,dcon$incwage,col=c1,main="Clustering of data in 3 classes", xlab="wkswork1", ylab="incwage")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$incwage,dcon$wkswork1,col=c1,main="Clustering of data in 3 classes", xlab="incwage", ylab="wkswork1")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$uhrswork,dcon$incwage,col=c1,main="Clustering of data in 3 classes", xlab="uhrswork", ylab="incwage")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$incwage,dcon$uhrswork,col=c1,main="Clustering of data in 3 classes", xlab="incwage", ylab="uhrswork")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$annhrs,dcon$incwage,col=c1,main="Clustering of data in 3 classes", xlab="annhrs", ylab="incwage")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$incwage,dcon$annhrs,col=c1,main="Clustering of data in 3 classes", xlab="incwage", ylab="annhrs")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$annhrs,dcon$hrwage,col=c1,main="Clustering of data in 3 classes", xlab="annhrs", ylab="hrwage")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$hrwage,dcon$annhrs,col=c1,main="Clustering of data in 3 classes", xlab="hrwage", ylab="annhrs")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$wkswork1,dcon$hrwage,col=c1,main="Clustering of data in 3 classes", xlab="wkswork1", ylab="hrwage")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+plot(dcon$hrwage,dcon$wkswork1,col=c1,main="Clustering of data in 3 classes", xlab="hrwage", ylab="wkswork1")
+legend("topright",c("class1","class2","class3"),pch=1,col=c(1:3), cex=0.6)
+
+```
+
+
+
+# Hierarchical cluster plots
+```{r}
+
+# LETS SEE THE PARTITION VISUALLY
+
+view(dcon)
+pairs(dcon[,1:7], col=c1)
+```
+
+# Profiling
+```{r}
+names(salary_gap_set)
+
+attach(salary_gap_set)
+
+#Dictamen    <- as.factor(Dictamen)
+#levels(Dictamen) <- c(NA, "positiu","negatiu")
+
+
+#Calcula els valor test de la variable Xnum per totes les modalitats del factor P
+ValorTestXnum <- function(Xnum,P){
+  #freq dis of fac
+  nk <- as.vector(table(P)); 
+  n <- sum(nk); 
+  #mitjanes x grups
+  xk <- tapply(Xnum,P,mean);
+  #valors test
+  txk <- (xk-mean(Xnum))/(sd(Xnum)*sqrt((n-nk)/(n*nk))); 
+  #p-values
+  pxk <- pt(txk,n-1,lower.tail=F);
+  for(c in 1:length(levels(as.factor(P)))){if (pxk[c]>0.5){pxk[c]<-1-pxk[c]}}
+  return (pxk)
+}
+
+
+
+
+ValorTestXquali <- function(P,Xquali){
+  taula <- table(P,Xquali);
+  n <- sum(taula); 
+  pk <- apply(taula,1,sum)/n;
+  pj <- apply(taula,2,sum)/n;
+  pf <- taula/(n*pk);
+  pjm <- matrix(data=pj,nrow=dim(pf)[1],ncol=dim(pf)[2], byrow=TRUE);      
+  dpf <- pf - pjm; 
+  dvt <- sqrt(((1-pk)/(n*pk))%*%t(pj*(1-pj))); 
+  #i hi ha divisions iguals a 0 dona NA i no funciona
+  zkj <- dpf
+  zkj[dpf!=0]<-dpf[dpf!=0]/dvt[dpf!=0]; 
+  pzkj <- pnorm(zkj,lower.tail=F);
+  for(c in 1:length(levels(as.factor(P)))){for (s in 1:length(levels(Xquali))){if (pzkj[c,s]> 0.5){pzkj[c,s]<-1- pzkj[c,s]}}}
+  return (list(rowpf=pf,vtest=zkj,pval=pzkj))
+}
+
+
+#source("file")
+#dades contain the dataset
+dades<-salary_gap_set
+#dades<-dd[filtro,]
+#dades<-df
+K<-dim(dades)[2]
+par(ask=TRUE)
+
+
+#P must contain the class variable
+#P<-dd[,3]
+P<-c1
+#P<-dd[,18]
+nameP<-"classe"
+#P<-df[,33]
+
+nc<-length(levels(factor(P)))
+nc
+pvalk <- matrix(data=0,nrow=nc,ncol=K, dimnames=list(levels(P),names(dades)))
+nameP<-"Class"
+n<-dim(dades)[1]
+
+for(k in 1:K){
+  if (is.numeric(dades[,k])){ 
+    print(paste("Anàlisi per classes de la Variable:", names(dades)[k]))
+    
+    boxplot(dades[,k]~P, main=paste("Boxplot of", names(dades)[k], "vs", nameP ), horizontal=TRUE)
+    
+    barplot(tapply(dades[[k]], P, mean),main=paste("Means of", names(dades)[k], "by", nameP ))
+    abline(h=mean(dades[[k]]))
+    legend(0,mean(dades[[k]]),"global mean",bty="n")
+    print("Estadístics per groups:")
+    for(s in levels(as.factor(P))) {print(summary(dades[P==s,k]))}
+    o<-oneway.test(dades[,k]~P)
+    print(paste("p-valueANOVA:", o$p.value))
+    kw<-kruskal.test(dades[,k]~P)
+    print(paste("p-value Kruskal-Wallis:", kw$p.value))
+    pvalk[,k]<-ValorTestXnum(dades[,k], P)
+    print("p-values ValorsTest: ")
+    print(pvalk[,k])      
+  }else{
+      #qualitatives
+      print(paste("Variable", names(dades)[k]))
+      table<-table(P,dades[,k])
+      #   print("Cross-table")
+      #   print(table)
+      rowperc<-prop.table(table,1)
+      
+      colperc<-prop.table(table,2)
+      #  print("Distribucions condicionades a files")
+      # print(rowperc)
+      
+      #ojo porque si la variable es true o false la identifica amb el tipus Logical i
+      #aquest no te levels, por tanto, coertion preventiva
+      
+      dades[,k]<-as.factor(dades[,k])
+      
+      
+      marg <- table(as.factor(P))/n
+      print(append("Categories=",levels(as.factor(dades[,k]))))
+      
+      #from next plots, select one of them according to your practical case
+      plot(marg,type="l",ylim=c(0,1),main=paste("Prop. of pos & neg by",names(dades)[k]))
+      paleta<-rainbow(length(levels(dades[,k])))
+      for(c in 1:length(levels(dades[,k]))){lines(colperc[,c],col=paleta[c]) }
+      
+      #with legend
+      plot(marg,type="l",ylim=c(0,1),main=paste("Prop. of pos & neg by",names(dades)[k]))
+      paleta<-rainbow(length(levels(dades[,k])))
+      for(c in 1:length(levels(dades[,k]))){lines(colperc[,c],col=paleta[c]) }
+      legend("topright", levels(dades[,k]), col=paleta, lty=2, cex=0.6)
+      
+      #condicionades a classes
+      print(append("Categories=",levels(dades[,k])))
+      plot(marg,type="n",ylim=c(0,1),main=paste("Prop. of pos & neg by",names(dades)[k]))
+      paleta<-rainbow(length(levels(dades[,k])))
+      for(c in 1:length(levels(dades[,k]))){lines(rowperc[,c],col=paleta[c]) }
+      
+      #with legend
+      plot(marg,type="n",ylim=c(0,1),main=paste("Prop. of pos & neg by",names(dades)[k]))
+      paleta<-rainbow(length(levels(dades[,k])))
+      for(c in 1:length(levels(dades[,k]))){lines(rowperc[,c],col=paleta[c]) }
+      legend("topright", levels(dades[,k]), col=paleta, lty=2, cex=0.6)
+      
+      #amb variable en eix d'abcisses
+      marg <-table(dades[,k])/n
+      print(append("Categories=",levels(dades[,k])))
+      plot(marg,type="l",ylim=c(0,1),main=paste("Prop. of pos & neg by",names(dades)[k]), las=3)
+      #x<-plot(marg,type="l",ylim=c(0,1),main=paste("Prop. of pos & neg by",names(dades)[k]), xaxt="n")
+      #text(x=x+.25, y=-1, adj=1, levels(CountryName), xpd=TRUE, srt=25, cex=0.7)
+      paleta<-rainbow(length(levels(as.factor(P))))
+      for(c in 1:length(levels(as.factor(P)))){lines(rowperc[c,],col=paleta[c]) }
+      
+      #with legend
+      plot(marg,type="l",ylim=c(0,1),main=paste("Prop. of pos & neg by",names(dades)[k]), las=3)
+      for(c in 1:length(levels(as.factor(P)))){lines(rowperc[c,],col=paleta[c])}
+      legend("topright", levels(as.factor(P)), col=paleta, lty=2, cex=0.6)
+      
+      #condicionades a columna 
+      plot(marg,type="n",ylim=c(0,1),main=paste("Prop. of pos & neg by",names(dades)[k]), las=3)
+      paleta<-rainbow(length(levels(as.factor(P))))
+      for(c in 1:length(levels(as.factor(P)))){lines(colperc[c,],col=paleta[c]) }
+      
+      #with legend
+      plot(marg,type="n",ylim=c(0,1),main=paste("Prop. of pos & neg by",names(dades)[k]), las=3)
+      for(c in 1:length(levels(as.factor(P)))){lines(colperc[c,],col=paleta[c])}
+      legend("topright", levels(as.factor(P)), col=paleta, lty=2, cex=0.6)
+      
+      table<-table(dades[,k],P)
+      print("Cross Table:")
+      print(table)
+      print("Distribucions condicionades a columnes:")
+      print(colperc)
+      
+      #diagrames de barres apilades                                         
+      
+      paleta<-rainbow(length(levels(dades[,k])))
+      barplot(table(dades[,k], as.factor(P)), beside=FALSE,col=paleta )
+      
+      barplot(table(dades[,k], as.factor(P)), beside=FALSE,col=paleta )
+      legend("topright",levels(as.factor(dades[,k])),pch=1,cex=0.5, col=paleta)
+      
+      #diagrames de barres adosades
+      barplot(table(dades[,k], as.factor(P)), beside=TRUE,col=paleta )
+      
+      barplot(table(dades[,k], as.factor(P)), beside=TRUE,col=paleta)
+      legend("topright",levels(as.factor(dades[,k])),pch=1,cex=0.5, col=paleta)
+      
+      print("Test Chi quadrat: ")
+      print(chisq.test(dades[,k], as.factor(P)))
+      
+      print("valorsTest:")
+      print( ValorTestXquali(P,dades[,k]))
+      #calcular els pvalues de les quali
+  }
+}#endfor
+
+#descriptors de les classes més significatius. Afegir info qualits
+for (c in 1:length(levels(as.factor(P)))) {
+  if(!is.na(levels(as.factor(P))[c])){
+    print(paste("P.values per class:",levels(as.factor(P))[c]));
+    print(sort(pvalk[c,]), digits=3) 
+  }
+}
+
+#afegir la informacio de les modalitats de les qualitatives a la llista de pvalues i fer ordenacio global
+
+#saving the dataframe in an external file
+#write.table(dd, file = "credscoClean.csv", sep = ";", na = "NA", dec = ".", row.names = FALSE, col.names = TRUE)
+
+
+```
+
+# distMatrix 
+```{r}
+actives<-colnames(salary_gap_set[,2:16])
+cat<-c("region","metro","relate","sex","race","marst","bpl","sch","educ99","empstat","classwkr")
+for (c in cat) {
+  salary_gap_set[c]<-as.factor(salary_gap_set[c])
+}
+
+dissimMatrix <- daisy(salary_gap_set[,actives], metric = "gower", stand=TRUE)
+
+distMatrix<-dissimMatrix^2
+
+h1 <- hclust(distMatrix,method="ward.D")  # NOTICE THE COST
+#versions noves "ward.D" i abans de plot: par(mar=rep(2,4)) si se quejara de los margenes del plot
+
+plot(h1)
+
+c2 <- cutree(h1,4)
+
+#class sizes 
+table(c2)
+
+#comparing with other partitions
+table(c1,c2)
+
+
+names(salary_gap_set)
+
+pairs(dcon[,1:7], col=c1)
+
+cdg <- aggregate(as.data.frame(dcon),list(c1),mean)
+cdg
+
+```
+
+# Save the dataset generated
+```{r}
+
+#Create document wit the table
+write.csv(salary_gap_set, "C:/Users/migue/MD/dataset_update.csv", row.names=FALSE)
+```
